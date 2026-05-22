@@ -1,0 +1,943 @@
+MODELE DE CHAMP DE VALEUR MORPHOLOGIQUE
+Reconnaissance de formes par champ de compatibilite, convolution exponentielle, transformations restreintes et contraintes topologiques
+
+Version augmentee et corrigee
+
+
+============================================================
+RESUME
+============================================================
+
+Le modele de Champ de Valeur Morphologique, abrege CVM, propose une approche interpretable de reconnaissance de formes, en particulier de caracteres manuscrits.
+
+Il represente chaque classe de forme non comme un gabarit binaire rigide, mais comme un champ spatial de compatibilite appris a partir d'exemples. Chaque classe est d'abord decrite par une carte de frequence morphologique, qui indique les zones ou les pixels apparaissent regulierement dans les exemples d'apprentissage. Cette carte est ensuite transformee en champ de valeur par diffusion spatiale, au moyen d'un noyau exponentiel decroissant avec la distance.
+
+Dans sa formulation la plus simple, le champ associe a une classe L est defini par :
+
+V_L(x,y) = Somme_{u,v} F_L(u,v) * gamma^{d((x,y),(u,v))}
+
+ou :
+
+- V_L(x,y) est la valeur morphologique du point (x,y) pour la classe L ;
+- F_L(u,v) est la frequence d'apparition d'un pixel actif au point (u,v) dans les exemples de la classe L ;
+- gamma est un facteur de tolerance morphologique compris entre 0 et 1 ;
+- d est une distance spatiale, par exemple la distance de Manhattan.
+
+La reconnaissance d'une image candidate consiste a mesurer son alignement avec les champs appris. Le modele peut etre renforce par une recherche sur un ensemble restreint de transformations geometriques, afin de gerer les translations, faibles rotations, changements d'echelle et inclinaisons plausibles. Il peut egalement etre complete par des invariants topologiques simples, comme le nombre de trous, de composantes, d'extremites ou de jonctions.
+
+Le CVM ne doit pas etre presente comme une invention radicalement nouvelle. Il s'inscrit dans une famille de methodes connues : template matching, champs de potentiel, transformees de distance, chamfer matching, estimation de densite par noyau, methodes de diffusion, invariants geometriques et topologiques. Sa contribution potentielle reside plutot dans une formulation unifiee, explicite, interpretable et experimentalement testable de ces principes.
+
+
+============================================================
+1. PROBLEMATIQUE
+============================================================
+
+La reconnaissance de caracteres manuscrits est difficile parce qu'une meme lettre peut etre ecrite de nombreuses manieres tout en conservant son identite.
+
+Une lettre peut varier selon :
+
+- sa position dans l'image ;
+- sa taille ;
+- son inclinaison ;
+- l'epaisseur du trait ;
+- les courbures locales ;
+- la pression graphique ;
+- le style de l'auteur ;
+- la presence de bruit ou de ruptures de trait.
+
+Un modele de comparaison pixel a pixel est trop strict. Deux occurrences parfaitement reconnaissables d'une meme lettre peuvent presenter un faible recouvrement exact si elles sont legerement decalees, agrandies, inclinees ou deformees.
+
+L'objectif du CVM est donc de construire une representation plus souple de la forme.
+
+Hypothese generale :
+
+Une forme manuscrite peut etre reconnue efficacement en la projetant sur des champs de compatibilite morphologique appris, dans lesquels les pixels frequemment observes diffusent une influence decroissante dans leur voisinage.
+
+
+============================================================
+2. POSITIONNEMENT SCIENTIFIQUE
+============================================================
+
+Le CVM doit etre positionne avec prudence.
+
+Il ne s'agit pas d'un modele entierement inedit. Il est proche de plusieurs familles classiques :
+
+- template matching ;
+- gabarits diffus ;
+- champs de potentiel ;
+- transformees de distance ;
+- chamfer matching ;
+- estimation de densite par noyau ;
+- convolution par noyau spatial ;
+- morphologie mathematique ;
+- invariants geometriques ;
+- invariants topologiques ;
+- reconnaissance par squelette.
+
+La nouveaute eventuelle ne reside donc pas dans une brique unique, mais dans l'assemblage explicite et interpretable de plusieurs principes :
+
+1. apprentissage d'une carte de frequence par classe ;
+2. diffusion de cette carte par un noyau exponentiel de distance ;
+3. reconnaissance par alignement entre image candidate et champ appris ;
+4. recherche optionnelle dans un groupe restreint de transformations geometriques ;
+5. ajout optionnel de contraintes topologiques ;
+6. interpretation explicable du score de decision.
+
+Formulation prudente de la contribution :
+
+Le Champ de Valeur Morphologique est une formulation interpretable de reconnaissance morphologique par champ de compatibilite. Il repose sur la convolution d'une carte de frequence par un noyau exponentiel de distance, enrichie par une recherche transformationnelle restreinte et par des contraintes topologiques auxiliaires.
+
+
+============================================================
+3. INTUITION DU MODELE
+============================================================
+
+L'intuition centrale est la suivante :
+
+Les pixels frequemment observes dans les exemples d'une meme classe forment des zones de forte compatibilite. Autour de ces zones, une tolerance spatiale est introduite par diffusion.
+
+Une lettre n'est donc pas representee comme une image binaire fixe, mais comme une carte de compatibilite.
+
+Par exemple, un gabarit binaire de lettre A pourrait etre represente ainsi :
+
+0 0 1 1 1 0 0
+0 1 0 0 0 1 0
+1 0 0 0 0 0 1
+1 1 1 1 1 1 1
+1 0 0 0 0 0 1
+1 0 0 0 0 0 1
+
+Apres diffusion, ce gabarit devient un champ continu ou quasi continu :
+
+- les zones correspondant aux traits frequents sont fortement valorisees ;
+- les zones proches des traits recoivent une valeur moyenne ;
+- les zones eloignees recoivent une valeur faible.
+
+Ainsi, un pixel legerement decale par rapport au gabarit appris peut encore contribuer positivement au score.
+
+
+============================================================
+4. OBJETS FONDAMENTAUX
+============================================================
+
+4.1 Image candidate
+
+On note I(x,y) l'image a reconnaitre.
+
+Elle peut etre binaire :
+
+I(x,y) appartient a {0,1}
+
+ou normalisee en niveaux de gris :
+
+I(x,y) appartient a [0,1]
+
+Une valeur elevee indique la presence d'un trait.
+
+4.2 Classe de forme
+
+On note L une classe de forme.
+
+Exemples :
+
+- lettres : A, B, C, ..., Z ;
+- chiffres : 0, 1, 2, ..., 9 ;
+- symboles : +, -, x, etc.
+
+Chaque classe possede un ensemble d'exemples d'apprentissage :
+
+D_L = {I_1^L, I_2^L, ..., I_n^L}
+
+4.3 Matrice de frequence morphologique
+
+A partir des exemples d'une classe L, on construit une matrice de frequence :
+
+F_L(x,y)
+
+Cette matrice mesure la frequence d'apparition d'un pixel actif a la position (x,y).
+
+Une definition simple est :
+
+F_L(x,y) = (1/n) * Somme_{k=1}^{n} I_k^L(x,y)
+
+Interpretation :
+
+- F_L(x,y) proche de 1 : pixel tres frequent ;
+- F_L(x,y) proche de 0 : pixel rare ;
+- zones fortes : traits stables de la classe ;
+- zones faibles : regions peu caracteristiques.
+
+
+============================================================
+5. CHAMP DE VALEUR MORPHOLOGIQUE
+============================================================
+
+5.1 Principe
+
+Chaque point de la matrice de frequence agit comme une source de compatibilite. Sa contribution diminue avec la distance.
+
+Le champ de valeur morphologique est donc une version diffusee de la carte de frequence.
+
+5.2 Equation generale
+
+V_L(x,y) = Somme_{u,v} F_L(u,v) * gamma^{d((x,y),(u,v))}
+
+ou :
+
+- gamma appartient a ]0,1[ ;
+- d est une distance spatiale ;
+- F_L est la carte de frequence ;
+- V_L est le champ obtenu.
+
+5.3 Distance de Manhattan
+
+Avec la distance de Manhattan :
+
+d((x,y),(u,v)) = |x-u| + |y-v|
+
+l'equation devient :
+
+V_L(x,y) = Somme_{u,v} F_L(u,v) * gamma^{|x-u| + |y-v|}
+
+5.4 Interpretation de gamma
+
+Le parametre gamma controle la tolerance morphologique.
+
+Gamma faible :
+
+- diffusion courte ;
+- modele strict ;
+- forte sensibilite au decalage ;
+- meilleure discrimination fine ;
+- moindre tolerance aux variations.
+
+Gamma eleve :
+
+- diffusion large ;
+- modele tolerant ;
+- meilleure robustesse aux petites variations ;
+- risque accru de confusion entre classes proches.
+
+Gamma peut etre :
+
+- global : meme gamma pour toutes les classes ;
+- specifique a chaque classe : gamma_L ;
+- local : gamma_L(x,y), pour tenir compte de zones plus ou moins variables.
+
+
+============================================================
+6. FORMULATION CONVOLUTIONNELLE
+============================================================
+
+6.1 Reformulation
+
+Le champ V_L peut etre interprete comme une convolution de la carte de frequence F_L par un noyau spatial K.
+
+V_L = F_L * K
+
+avec :
+
+K(x,y) = gamma^{d((x,y),(0,0))}
+
+Pour la distance de Manhattan :
+
+K(x,y) = gamma^{|x| + |y|}
+
+6.2 Separabilite du noyau de Manhattan
+
+Avec la distance de Manhattan :
+
+gamma^{|x-u| + |y-v|}
+=
+gamma^{|x-u|} * gamma^{|y-v|}
+
+Le noyau 2D est donc separable.
+
+Cela signifie que la diffusion peut etre calculee par deux convolutions 1D successives :
+
+1. diffusion horizontale ;
+2. diffusion verticale.
+
+6.3 Consequence algorithmique
+
+La diffusion naive consiste a parcourir tous les pixels sources puis tous les pixels cibles.
+
+Cette approche est couteuse.
+
+Si l'image contient N pixels et que S pixels sont actifs, la complexite naive est de l'ordre de :
+
+O(S * N)
+
+Pour une grille dense, cela peut devenir proche de :
+
+O(N^2)
+
+En exploitant la separabilite du noyau exponentiel de Manhattan, il est possible de calculer la diffusion en temps lineaire par rapport au nombre de pixels, a constante pres :
+
+O(N)
+
+6.4 Calcul recursif 1D
+
+Pour une ligne f_i, on veut calculer :
+
+y_i = Somme_j gamma^{|i-j|} f_j
+
+On peut separer les contributions venant de la gauche et de la droite.
+
+Passe gauche vers droite :
+
+L_i = f_i + gamma * L_{i-1}
+
+Passe droite vers gauche :
+
+R_i = f_i + gamma * R_{i+1}
+
+Combinaison :
+
+y_i = L_i + R_i - f_i
+
+Le terme f_i est soustrait car il est compte deux fois.
+
+Cette propriete rend le modele beaucoup plus scalable que la diffusion pixel par pixel.
+
+
+============================================================
+7. FONCTIONS DE SCORE
+============================================================
+
+7.1 Score brut
+
+Le score le plus simple entre une image candidate I et une classe L est :
+
+Score(I,L) = Somme_{x,y} I(x,y) * V_L(x,y)
+
+ou, sous forme de produit scalaire :
+
+Score(I,L) = <I, V_L>
+
+Interpretation :
+
+Chaque pixel actif de l'image candidate active la valeur du champ correspondant.
+
+La classe predite est :
+
+L_hat = argmax_L Score(I,L)
+
+7.2 Limite du score brut
+
+Le score brut peut favoriser :
+
+- les images ayant davantage de pixels actifs ;
+- les classes dont le champ est plus dense ;
+- les lettres plus massives ;
+- les valeurs de gamma plus elevees.
+
+Il doit donc etre complete par des scores normalises.
+
+7.3 Score cosinus
+
+Un score plus standard est le score cosinus :
+
+Score_cos(I,L) = <I,V_L> / (||I|| * ||V_L||)
+
+Avantages :
+
+- mesure l'alignement entre l'image et le champ ;
+- reduit l'effet de la masse totale ;
+- facilite la comparaison entre classes ;
+- fournit une normalisation mathematiquement plus defendable.
+
+Le score cosinus devrait etre considere comme score principal dans une evaluation experimentale serieuse.
+
+7.4 Score normalise par masse
+
+Un autre score possible est :
+
+Score_masse(I,L) =
+Somme I(x,y)V_L(x,y) / [Somme I(x,y) * Somme V_L(x,y)]
+
+Ce score est intuitif, mais il peut etre trompeur, car la masse totale du champ depend fortement de gamma et de la densite de la classe. Il doit donc etre teste, mais non suppose neutre a priori.
+
+7.5 Score penalise
+
+Pour penaliser les pixels presents dans des zones incompatibles, on peut introduire une matrice de penalite P_L(x,y).
+
+Score_pen(I,L) =
+Somme I(x,y)V_L(x,y)
+-
+lambda * Somme I(x,y)P_L(x,y)
+
+Le parametre lambda controle l'importance de la penalite.
+
+Cette approche est utile pour distinguer des classes proches :
+
+- C et O ;
+- P et R ;
+- I, L et T ;
+- 6 et 9 ;
+- 3 et 8.
+
+7.6 Score probabiliste possible
+
+Si V_L est converti en carte de probabilite, on peut definir un score de log-vraisemblance. Cette piste demande cependant une formulation probabiliste plus stricte, notamment pour traiter les absences de pixels et les dependances spatiales.
+
+
+============================================================
+8. INVARIANCE GEOMETRIQUE RESTREINTE
+============================================================
+
+8.1 Probleme
+
+Une image candidate peut etre :
+
+- decalee ;
+- legerement tournee ;
+- agrandie ou reduite ;
+- inclinee ;
+- deformee de maniere plausible.
+
+Comparer uniquement I a V_L est donc insuffisant.
+
+8.2 Formulation generale
+
+On introduit un ensemble G de transformations geometriques acceptables.
+
+Score(I,L) = max_{g dans G} <g.I, V_L>
+
+La prediction devient :
+
+L_hat = argmax_L max_{g dans G} <g.I, V_L>
+
+ou g.I designe l'image transformee.
+
+8.3 Transformations possibles
+
+Translations :
+
+(x,y) -> (x+a, y+b)
+
+Rotations faibles :
+
+theta dans [-15 degres, +15 degres]
+
+Changements d'echelle :
+
+s dans [0.8, 1.2]
+
+Cisaillements :
+
+x' = x + k y
+
+Transformations affines restreintes :
+
+[x']   [a b] [x]   [t_x]
+[y'] = [c d] [y] + [t_y]
+
+8.4 Pourquoi restreindre G ?
+
+Une invariance trop forte detruit l'identite des formes.
+
+Exemples :
+
+- un M retourne peut ressembler a un W ;
+- un 6 tourne peut evoquer un 9 ;
+- un C trop ferme peut devenir proche d'un O ;
+- un I trop transforme peut devenir proche d'un L.
+
+Le modele doit donc etre robuste aux transformations plausibles, mais pas invariant a toutes les transformations.
+
+Formulation recommandee :
+
+Le CVM utilise une robustesse transformationnelle restreinte, et non une invariance geometrique absolue.
+
+
+============================================================
+9. CONTRAINTES TOPOLOGIQUES
+============================================================
+
+9.1 Motivation
+
+Deux formes peuvent etre spatialement proches mais structurellement differentes.
+
+Exemples :
+
+- O et C ;
+- P et R ;
+- B et 8 ;
+- A et H.
+
+Un champ spatial seul peut parfois les confondre.
+
+9.2 Invariants topologiques simples
+
+On peut ajouter des descripteurs structurels :
+
+- nombre de composantes connexes ;
+- nombre de trous ;
+- nombre d'extremites ;
+- nombre de jonctions ;
+- presence d'une boucle fermee ;
+- structure du squelette ;
+- graphe des branches.
+
+9.3 Role auxiliaire de la topologie
+
+La topologie ne doit pas etre presentee comme le coeur du modele.
+
+Elle doit etre consideree comme un correcteur structurel facultatif, utile principalement lorsque la difference entre deux classes depend d'un invariant global.
+
+Exemple :
+
+O :
+- une composante principale ;
+- un trou ;
+- peu ou pas d'extremites.
+
+C :
+- une composante principale ;
+- aucun trou ;
+- deux extremites.
+
+9.4 Fragilite topologique
+
+Les descripteurs topologiques peuvent etre instables si :
+
+- le trait est rompu ;
+- le bruit est important ;
+- la binarisation est mauvaise ;
+- le squelette introduit de fausses branches ;
+- une boucle est presque fermee mais pas totalement.
+
+Il faut donc evaluer empiriquement si la topologie ameliore vraiment la reconnaissance ou ajoute du bruit.
+
+9.5 Score topologique
+
+On peut definir un score topologique :
+
+TopoScore(I,L)
+
+Le score total devient :
+
+Score_total(I,L) =
+alpha * Score_champ(I,L)
++
+beta * TopoScore(I,L)
+-
+lambda * Penalty(I,L)
+
+Les poids alpha, beta et lambda doivent etre appris ou valides sur un ensemble de validation suffisant.
+
+
+============================================================
+10. SQUELETTE MORPHOLOGIQUE
+============================================================
+
+10.1 Motivation
+
+Une lettre manuscrite est aussi la trace d'un geste. L'extraction du squelette permet de reduire l'influence de l'epaisseur du trait.
+
+10.2 Representation
+
+Le squelette peut etre represente comme un graphe :
+
+- les extremites sont des noeuds terminaux ;
+- les intersections sont des noeuds de jonction ;
+- les segments sont des aretes ;
+- les courbures peuvent etre mesurees le long des aretes.
+
+10.3 Double champ
+
+On peut envisager deux champs :
+
+V_L_pixel : champ appris sur les pixels bruts ;
+
+V_L_squelette : champ appris sur le squelette.
+
+Score hybride :
+
+Score(I,L) =
+alpha * <I, V_L_pixel>
++
+beta * <S(I), V_L_squelette>
+
+ou S(I) represente le squelette de l'image candidate.
+
+
+============================================================
+11. ARCHITECTURE GENERALE DU MODELE
+============================================================
+
+Le modele complet peut etre organise en six etapes.
+
+Etape 1 : pretraitement
+
+- binarisation ;
+- denoising ;
+- extraction de la boite englobante ;
+- recentrage ;
+- redimensionnement ;
+- correction legere de l'inclinaison ;
+- normalisation de l'epaisseur du trait.
+
+Etape 2 : construction des cartes de frequence
+
+Pour chaque classe L :
+
+- collecter les exemples ;
+- aligner les images ;
+- calculer F_L(x,y).
+
+Etape 3 : diffusion/convolution
+
+Pour chaque classe L :
+
+- choisir une distance ;
+- choisir gamma ;
+- calculer V_L = F_L * K ;
+- utiliser si possible une implementation separable efficace.
+
+Etape 4 : score morphologique
+
+Pour une image candidate I :
+
+- calculer le score avec chaque V_L ;
+- utiliser de preference un score cosinus ;
+- tester eventuellement plusieurs transformations.
+
+Etape 5 : contraintes structurelles
+
+- extraire les composantes ;
+- detecter les trous ;
+- calculer le squelette ;
+- estimer extremites et jonctions ;
+- calculer un score topologique eventuel.
+
+Etape 6 : decision
+
+Combiner :
+
+- score de champ ;
+- score transformationnel ;
+- score topologique ;
+- penalites d'incompatibilite.
+
+Prediction :
+
+L_hat = argmax_L Score_total(I,L)
+
+
+============================================================
+12. HYPERPARAMETRES
+============================================================
+
+Les principaux hyperparametres sont :
+
+- gamma : facteur de diffusion ;
+- distance : Manhattan, euclidienne, Chebyshev, geodesique ;
+- type de score : brut, cosinus, masse, penalise ;
+- lambda : poids de la penalite ;
+- beta : poids de la topologie ;
+- amplitude des transformations autorisees ;
+- taille de grille ;
+- methode de binarisation ;
+- normalisation du trait ;
+- type de squelette.
+
+Attention :
+
+Le reglage de ces parametres sur un tres petit jeu de validation produit un risque eleve de surapprentissage. Les resultats obtenus sur quelques exemples doivent etre consideres comme demonstratifs, non conclusifs.
+
+
+============================================================
+13. PROTOCOLE EXPERIMENTAL RECOMMANDE
+============================================================
+
+13.1 Phase 1 : prototype minimal
+
+Objectif :
+
+Valider l'intuition sur des lettres binaires simples.
+
+Actions :
+
+- creer quelques lettres artificielles ;
+- construire les champs ;
+- tester des decalages et petits bruits ;
+- observer les cartes de compatibilite.
+
+13.2 Phase 2 : apprentissage multi-exemples
+
+Objectif :
+
+Construire une carte de frequence par classe.
+
+Actions :
+
+- collecter plusieurs exemples par classe ;
+- normaliser les images ;
+- calculer F_L ;
+- diffuser pour obtenir V_L.
+
+13.3 Phase 3 : etude de gamma
+
+Tester :
+
+gamma = 0.50
+gamma = 0.60
+gamma = 0.70
+gamma = 0.80
+gamma = 0.90
+gamma = 0.95
+
+Mesurer :
+
+- precision globale ;
+- erreurs par classe ;
+- matrice de confusion ;
+- robustesse au bruit ;
+- robustesse aux decalages.
+
+13.4 Phase 4 : comparaison des scores
+
+Comparer :
+
+- score brut ;
+- score cosinus ;
+- score normalise par masse ;
+- score penalise.
+
+13.5 Phase 5 : transformations
+
+Tester :
+
+- sans transformation ;
+- translations seulement ;
+- translations + rotations faibles ;
+- translations + echelle ;
+- transformations affines restreintes.
+
+13.6 Phase 6 : topologie
+
+Comparer :
+
+- CVM seul ;
+- CVM + penalite ;
+- CVM + transformations ;
+- CVM + transformations + topologie.
+
+13.7 Phase 7 : jeux de donnees standards
+
+Utiliser :
+
+- MNIST pour les chiffres ;
+- EMNIST pour les lettres ;
+- eventuellement un jeu personnalise de lettres manuscrites.
+
+
+============================================================
+14. BASELINES OBLIGATOIRES
+============================================================
+
+Pour evaluer l'apport reel du CVM, il faut le comparer a des methodes de reference.
+
+Baselines minimales :
+
+1. template matching brut ;
+2. template matching avec recentrage ;
+3. template matching avec score cosinus ;
+4. distance transform ;
+5. chamfer matching ;
+6. k-NN sur pixels ;
+7. regression logistique simple ;
+8. SVM simple ;
+9. petit CNN comme plafond moderne de performance.
+
+L'objectif n'est pas necessairement de battre les CNN, mais de montrer que le CVM offre un compromis interessant entre :
+
+- simplicite ;
+- interpretabilite ;
+- faible volume de donnees ;
+- robustesse locale ;
+- explicabilite des decisions.
+
+
+============================================================
+15. INDICATEURS D'EVALUATION
+============================================================
+
+Les metriques recommandees sont :
+
+- precision globale ;
+- precision par classe ;
+- rappel par classe ;
+- F1-score ;
+- matrice de confusion ;
+- taux d'erreur par type de transformation ;
+- robustesse au bruit ;
+- robustesse au decalage ;
+- robustesse a la rotation ;
+- robustesse au changement d'echelle ;
+- temps de calcul ;
+- memoire utilisee ;
+- stabilite des descripteurs topologiques ;
+- lisibilite des erreurs.
+
+Il faut egalement produire des visualisations :
+
+- champ V_L par classe ;
+- activation I * V_L ;
+- zones de penalite ;
+- transformation optimale selectionnee ;
+- erreurs de classification interpretees spatialement.
+
+
+============================================================
+16. FORCES DU MODELE
+============================================================
+
+16.1 Interpretabilite
+
+Le modele permet de visualiser pourquoi une forme est reconnue.
+
+On peut observer :
+
+- quelles zones de l'image activent le champ ;
+- quelles zones sont incompatibles ;
+- quelles transformations ameliorent le score ;
+- quelles proprietes topologiques confirment ou contredisent la decision.
+
+16.2 Simplicite mathematique
+
+Le coeur du modele repose sur une equation simple :
+
+V_L(x,y) = Somme F_L(u,v) * gamma^{d((x,y),(u,v))}
+
+16.3 Faible dependance aux grands volumes de donnees
+
+Contrairement a des modeles profonds, le CVM peut fonctionner comme prototype avec peu d'exemples, meme si une validation serieuse demande davantage de donnees.
+
+16.4 Robustesse locale
+
+La diffusion spatiale permet de tolerer les petits decalages et variations graphiques.
+
+16.5 Extension geometrique naturelle
+
+Le score modulo transformations permet de prendre en compte certaines variations de position, taille et inclinaison.
+
+16.6 Explicabilite pedagogique
+
+Le modele est particulierement adapte pour expliquer la reconnaissance de formes de maniere visuelle et progressive.
+
+
+============================================================
+17. LIMITES DU MODELE
+============================================================
+
+17.1 Non-nouveaute des briques
+
+Les idees de diffusion, gabarit, champ de potentiel, transformee de distance et invariants sont deja connues. Le CVM doit donc etre presente comme une synthese interpretable, non comme une invention ex nihilo.
+
+17.2 Sensibilite au pretraitement
+
+Le recentrage, la binarisation, la normalisation de taille et l'epaisseur du trait influencent fortement les performances.
+
+17.3 Risque de confusion par diffusion excessive
+
+Un gamma trop eleve rend les champs trop larges et peut reduire la discrimination.
+
+17.4 Cout des transformations
+
+Tester un grand nombre de transformations peut etre couteux. Il faut limiter G aux transformations plausibles ou utiliser des methodes d'optimisation.
+
+17.5 Fragilite topologique
+
+Les trous, jonctions et extremites peuvent etre instables sur des images bruitées ou des traces rompues.
+
+17.6 Performance probablement inferieure aux CNN modernes
+
+Le CVM peut etre interpretable et efficace sur certains cas, mais il ne faut pas supposer qu'il surpassera les architectures profondes sur de grands jeux de donnees.
+
+
+============================================================
+18. PERSPECTIVES D'AMELIORATION
+============================================================
+
+18.1 Gamma adaptatif
+
+Apprendre un gamma different selon les classes ou les zones de la forme.
+
+18.2 Noyaux alternatifs
+
+Tester :
+
+- noyau gaussien ;
+- noyau exponentiel euclidien ;
+- noyau compact ;
+- noyau oriente ;
+- noyau anisotrope.
+
+18.3 Orientation locale
+
+Associer a chaque pixel une direction locale du trait.
+
+18.4 Champs multi-echelles
+
+Construire des champs a plusieurs resolutions pour capturer a la fois la structure globale et les details locaux.
+
+18.5 Deformations elastiques
+
+Autoriser des deformations locales controlees pour mieux gerer les variations manuscrites fortes.
+
+18.6 Apprentissage discriminatif
+
+Optimiser gamma, les poids topologiques et les penalites non pour reconstruire la forme, mais pour separer les classes.
+
+18.7 Formulation probabiliste
+
+Transformer les champs en distributions de probabilite et definir un score de vraisemblance plus rigoureux.
+
+18.8 Acceleration algorithmique
+
+Utiliser :
+
+- convolution separable ;
+- FFT pour certains noyaux ;
+- vectorisation NumPy ;
+- calcul GPU ;
+- pruning des transformations inutiles.
+
+
+============================================================
+19. FORMULATION COURTE
+============================================================
+
+Le Champ de Valeur Morphologique est un modele interpretable de reconnaissance de formes dans lequel chaque classe est representee par une carte de frequence apprise, transformee en champ de compatibilite par convolution avec un noyau exponentiel de distance. Une image candidate est classee selon son alignement avec ces champs, eventuellement apres application d'un ensemble restreint de transformations geometriques et sous contraintes topologiques auxiliaires.
+
+
+============================================================
+20. FORMULATION ACADEMIQUE
+============================================================
+
+Nous proposons une formulation interpretable de reconnaissance de formes fondee sur des champs de valeur morphologique. Pour chaque classe, une matrice de frequence est estimee a partir des exemples d'apprentissage, puis transformee en champ de compatibilite par convolution avec un noyau exponentiel de distance. La classification d'une image candidate est obtenue par maximisation d'un score d'alignement entre l'image et les champs appris, de preference au moyen d'une similarite cosinus. Afin de tenir compte des variations naturelles de l'ecriture manuscrite, le score peut etre evalue sur un ensemble restreint de transformations geometriques et complete par des descripteurs topologiques. Le modele vise une reconnaissance explicable, geometriquement robuste et mathematiquement explicite, sans pretendre remplacer les architectures profondes dans les contextes ou celles-ci disposent de grands volumes de donnees.
+
+
+============================================================
+21. CONCLUSION
+============================================================
+
+Le modele de Champ de Valeur Morphologique constitue une base conceptuelle serieuse pour une reconnaissance de formes interpretable.
+
+Sa force principale est de transformer une representation binaire rigide en champ de compatibilite spatialement tolerant. Sa formulation convolutionnelle permet de le relier proprement aux methodes classiques de traitement d'image et de reconnaissance de formes. Son extension par transformations geometriques restreintes permet de traiter les variations de position, d'echelle et d'inclinaison. Son eventuelle composante topologique peut aider a distinguer des formes structurellement differentes mais spatialement proches.
+
+Le modele doit toutefois rester scientifiquement prudent. Ses briques sont connues. Sa contribution potentielle reside dans leur articulation claire, leur interpretation morphologique et leur usage comme modele explicable a faible complexite conceptuelle.
+
+La suite du projet doit donc viser une validation experimentale rigoureuse, comprenant :
+
+- comparaison a des baselines classiques ;
+- mesure de l'apport reel de la diffusion ;
+- mesure de l'apport reel des transformations ;
+- mesure de l'apport reel de la topologie ;
+- evaluation sur des jeux standards comme MNIST ou EMNIST ;
+- analyse detaillee des erreurs.
+
+Le CVM est donc moins une rupture qu'une synthese methodologique : un cadre lisible pour penser la reconnaissance de formes comme activation d'un champ morphologique appris.
